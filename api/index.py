@@ -61,12 +61,14 @@ async def upload_skin(username: str, file: UploadFile = File(...)):
         supabase.storage.from_(BUCKET).remove([target_name])
     except Exception:
         pass
-    try:
-        supabase.storage.from_(BUCKET).upload(
+        try:
+        response = supabase.storage.from_(BUCKET).upload(
             path=target_name,
             file=content,
             file_options={"content-type": "image/png"},
         )
+        if hasattr(response, "error") and response.error:
+            raise Exception(response.error)
     except Exception as e:
         raise HTTPException(500, f"Ошибка загрузки: {e}")
     public_url = f"{SUPABASE_URL}/storage/v1/object/public/{BUCKET}/{target_name}"
