@@ -1,43 +1,60 @@
 """
-ANIXCRAFT Skin API v6.0.0
+ANIXCRAFT Skin API v7.0.0 — прямой HTTP к Supabase
 """
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import Response
-from supabase import create_client, Client
 import os
+import requests
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip()
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip().rstrip("/")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "").strip()
 
 BUCKET = "skins"
 VALID_SIZE = 1024
 MAX_SIZE = 1024 * 1024
 
-app = FastAPI(title="ANIXCRAFT Skin API", version="6.0.0")
+app = FastAPI(title="ANIXCRAFT Skin API", version="7.0.0")
 
 
-def get_supabase() -> Client:
-    """Создаёт клиент каждый раз. Для serverless — обязательно."""
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        raise HTTPException(500, "Supabase не настроен")
-    return create_client(SUPABASE_URL, SUPABASE_KEY)
+def _headers(content_type=None):
+    h = {
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "apikey": SUPABASE_KEY,
+    }
+    if content_type:
+        h["Content-Type"] = content_type
+    return h
 
 
 @app.get("/")
 def root():
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return {
+            "status": "ok", "api": "ANIXCRAFT Skin API", "version": "7.0.0",
+            "storage": "NOT CONFIGURED", "skins_count": 0, "skins": [],
+        }
     skins = []
     try:
-        client = get_supabase()
-        files = client.storage.from_(BUCKET).list()
-        skins = [f["name"].replace(".png", "") for f in files if f["name"].endswith(".png")]
+        url = f"{SUPABASE_URL}/storage/v1/object/list/{BUCKET}"
+        r = requests.post(
+            url,
+            headers=_headers("application/json"),
+            json={"prefix": "", "limit": 100},
+            timeout=10,
+        )
+        if r.status_code == 200:
+            for item in r.json():
+                name = item.get("name", "")
+                if name.endswith(".png"):
+                    skins.append(name[:-4])
     except Exception as e:
-        print(f"list error: {e}")
+        print(f"list error: {type(e).__name__}: {e}")
 
     return {
         "status": "ok",
         "api": "ANIXCRAFT Skin API",
-        "version": "6.0.0",
-        "storage": "Supabase Storage" if (SUPABASE_URL and SUPABASE_KEY) else "NOT CONFIGURED",
+        "version": "7.0.0",
+        "storage": "Supabase Storage",
         "skins_count": len(skins),
         "skins": skins[:50],
     }
@@ -45,7 +62,9 @@ def root():
 
 @app.post("/skin/{username}")
 async def upload_skin(username: str, file: UploadFile = File(...)):
-    client = get_supabase()
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        raise HTTPException(500, "Supabase не настроен")
+
     username = username.strip()
     if not username or len(username) > 32:
         raise HTTPException(400, "Неверный ник")
@@ -60,21 +79,26 @@ async def upload_skin(username: str, file: UploadFile = File(...)):
 
     target_name = f"{username}.png"
 
-    # Удалить старый (если есть)
+    # Удалить старый (игнорируем ошибку, если нет)
     try:
-        client.storage.from_(BUCKET).remove([target_name])
+        requests.delete(
+            f"{SUPABASE_URL}/storage/v1/object/{BUCKET}/{target_name}",
+            headers=_headers(),
+            timeout=10,
+        )
     except Exception:
         pass
 
     # Загрузить новый
     try:
-        result = client.storage.from_(BUCKET).upload(
-            path=target_name,
-            file=content,
-            file_options={"content-type": "image/png"},
+        r = requests.post(
+            f"{SUPABASE_URL}/storage/v1/object/{BUCKET}/{target_name}",
+            headers=_headers("image/png"),
+            data=content,
+            timeout=15,
         )
-        if hasattr(result, "error") and result.error:
-            raise Exception(str(result.error))
+        if r.status_code not in (200, 201):
+            raise Exception(f"{r.status_code}: {r.text[:200]}")
     except Exception as e:
         raise HTTPException(500, f"Ошибка загрузки: {type(e).__name__}: {e}")
 
@@ -90,21 +114,33 @@ async def upload_skin(username: str, file: UploadFile = File(...)):
 
 @app.get("/skin/{username}")
 async def get_skin(username: str):
-    client = get_supabase()
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        raise HTTPException(500, "Supabase не настроен")
+
     username = username.strip()
     try:
-        content = client.storage.from_(BUCKET).download(f"{username}.png")
+        r = requests.get(
+            f"{SUPABASE_URL}/storage/v1/object/{BUCKET}/{username}.png",
+            headers=_headers(),
+            timeout=10,
+        )
+        if r.status_code != 200:
+            raise Exception()
     except Exception:
         raise HTTPException(404, f"Не найден: {username}")
-    return Response(content=content, media_type="image/png")
+    return Response(content=r.content, media_type="image/png")
 
 
 @app.delete("/skin/{username}")
 async def delete_skin(username: str):
-    client = get_supabase()
-    username = username.strip()
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        raise HTTPException(500, "Supabase не настроен")
     try:
-        client.storage.from_(BUCKET).remove([f"{username}.png"])
+        requests.delete(
+            f"{SUPABASE_URL}/storage/v1/object/{BUCKET}/{username}.png",
+            headers=_headers(),
+            timeout=10,
+        )
     except Exception:
         raise HTTPException(404, "Не найден")
     return {"status": "ok", "deleted": username}
