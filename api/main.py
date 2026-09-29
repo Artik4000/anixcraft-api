@@ -39,7 +39,7 @@ def root():
     }
 
 
-@app.post("/skin/{username}")
+@app.post("/upload/{username}")
 async def upload_skin(username: str, file: UploadFile = File(...)):
     if not supabase:
         raise HTTPException(500, "Supabase не настроен")
