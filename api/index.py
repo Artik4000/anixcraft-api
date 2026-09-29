@@ -110,3 +110,4 @@ async def delete_skin(username: str):
     except Exception as e:
         raise HTTPException(404, f"Скин не найден: {type(e).__name__}")
     return {"status": "ok", "deleted": username}
+# force rebuild
